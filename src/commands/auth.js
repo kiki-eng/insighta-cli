@@ -31,11 +31,11 @@ function registerAuthCommands(program) {
 
       try {
         const token = await new Promise((resolve, reject) => {
-          const server = http.createServer((req, res) => {
+          const server = http.createServer(async (req, res) => {
             const parsed = url.parse(req.url, true);
 
             if (parsed.pathname === '/callback') {
-              const { access_token, refresh_token, username, state: callbackState } = parsed.query;
+              const { code, state: callbackState } = parsed.query;
 
               if (callbackState && callbackState !== state) {
                 res.writeHead(400, { 'Content-Type': 'text/html' });
@@ -45,18 +45,37 @@ function registerAuthCommands(program) {
                 return;
               }
 
-              if (!access_token) {
+              if (!code) {
                 res.writeHead(400, { 'Content-Type': 'text/html' });
-                res.end('<html><body><h1>Authentication failed</h1><p>No token received.</p></body></html>');
-                reject(new Error('No access token received'));
+                res.end('<html><body><h1>Authentication failed</h1><p>No authorization code received.</p></body></html>');
+                reject(new Error('No authorization code received'));
                 server.close();
                 return;
               }
 
-              res.writeHead(200, { 'Content-Type': 'text/html' });
-              res.end('<html><body><h1>Authentication successful!</h1><p>You can close this tab and return to the terminal.</p></body></html>');
+              try {
+                const exchangeRes = await fetch(`${API_BASE_URL}/auth/token/exchange`, {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({ code, code_verifier: codeVerifier }),
+                });
+                const data = await exchangeRes.json();
 
-              resolve({ access_token, refresh_token, username });
+                if (data.status === 'success' && data.access_token) {
+                  res.writeHead(200, { 'Content-Type': 'text/html' });
+                  res.end('<html><body><h1>Authentication successful!</h1><p>You can close this tab and return to the terminal.</p></body></html>');
+                  resolve({ access_token: data.access_token, refresh_token: data.refresh_token, username: data.user?.username });
+                } else {
+                  res.writeHead(400, { 'Content-Type': 'text/html' });
+                  res.end(`<html><body><h1>Authentication failed</h1><p>${data.message || 'Token exchange failed'}</p></body></html>`);
+                  reject(new Error(data.message || 'Token exchange failed'));
+                }
+              } catch (err) {
+                res.writeHead(500, { 'Content-Type': 'text/html' });
+                res.end('<html><body><h1>Authentication failed</h1><p>Could not exchange token.</p></body></html>');
+                reject(err);
+              }
+
               server.close();
             }
           });
