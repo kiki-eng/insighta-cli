@@ -1,6 +1,7 @@
+'use strict';
+
 const http = require('http');
-const chalk = require('chalk');
-const ora = require('ora');
+const url = require('url');
 const { API_BASE_URL } = require('../lib/config');
 const {
   generateState,
@@ -8,126 +9,140 @@ const {
   generateCodeChallenge,
   saveCredentials,
   loadCredentials,
-  clearCredentials
+  deleteCredentials,
 } = require('../lib/auth');
-const { displayUser, displayError } = require('../utils/display');
+const { authenticatedRequest } = require('../lib/api');
+const { userInfoTable, handleError } = require('../utils/display');
 
-async function login() {
-  const state = generateState();
-  const codeVerifier = generateCodeVerifier();
-  const codeChallenge = generateCodeChallenge(codeVerifier);
+function registerAuthCommands(program) {
+  program
+    .command('login')
+    .description('Authenticate with Insighta via GitHub')
+    .action(async () => {
+      const chalk = (await import('chalk')).default;
+      const ora = (await import('ora')).default;
+      const open = (await import('open')).default;
 
-  const port = 9876 + Math.floor(Math.random() * 100);
+      const state = generateState();
+      const codeVerifier = generateCodeVerifier();
+      const codeChallenge = generateCodeChallenge(codeVerifier);
 
-  const server = http.createServer(async (req, res) => {
-    const url = new URL(req.url, `http://localhost:${port}`);
+      const spinner = ora('Waiting for browser authentication...').start();
 
-    if (url.pathname === '/callback') {
-      const accessToken = url.searchParams.get('access_token');
-      const refreshToken = url.searchParams.get('refresh_token');
-      const username = url.searchParams.get('username');
-      const returnedState = url.searchParams.get('state');
+      try {
+        const token = await new Promise((resolve, reject) => {
+          const server = http.createServer((req, res) => {
+            const parsed = url.parse(req.url, true);
 
-      res.writeHead(200, { 'Content-Type': 'text/html' });
-      res.end('<html><body><h2>Authentication successful!</h2><p>You can close this window and return to the terminal.</p></body></html>');
+            if (parsed.pathname === '/callback') {
+              const { access_token, refresh_token, username, state: callbackState } = parsed.query;
 
-      if (accessToken && refreshToken) {
-        saveCredentials({
-          access_token: accessToken,
-          refresh_token: refreshToken,
-          username: username || 'unknown'
+              if (callbackState && callbackState !== state) {
+                res.writeHead(400, { 'Content-Type': 'text/html' });
+                res.end('<html><body><h1>Authentication failed</h1><p>State mismatch. Please try again.</p></body></html>');
+                reject(new Error('State mismatch'));
+                server.close();
+                return;
+              }
+
+              if (!access_token) {
+                res.writeHead(400, { 'Content-Type': 'text/html' });
+                res.end('<html><body><h1>Authentication failed</h1><p>No token received.</p></body></html>');
+                reject(new Error('No access token received'));
+                server.close();
+                return;
+              }
+
+              res.writeHead(200, { 'Content-Type': 'text/html' });
+              res.end('<html><body><h1>Authentication successful!</h1><p>You can close this tab and return to the terminal.</p></body></html>');
+
+              resolve({ access_token, refresh_token, username });
+              server.close();
+            }
+          });
+
+          server.listen(0, () => {
+            const port = server.address().port;
+            const redirectUri = `http://localhost:${port}/callback`;
+            const authUrl =
+              `${API_BASE_URL}/auth/github` +
+              `?redirect_uri=${encodeURIComponent(redirectUri)}` +
+              `&state=${state}` +
+              `&code_challenge=${codeChallenge}` +
+              `&source=cli`;
+
+            open(authUrl).catch(() => {
+              spinner.info(`Open this URL in your browser:\n${authUrl}`);
+            });
+          });
+
+          server.on('error', reject);
+
+          setTimeout(() => {
+            server.close();
+            reject(new Error('Authentication timed out after 120 seconds'));
+          }, 120_000);
         });
-        console.log(chalk.green(`\n✓ Logged in as @${username || 'unknown'}`));
-      } else {
-        console.error(chalk.red('\n✗ Authentication failed: no tokens received'));
-      }
 
-      server.close();
-    }
-  });
-
-  server.listen(port, async () => {
-    const redirectUri = `http://localhost:${port}/callback`;
-    const authUrl = `${API_BASE_URL}/auth/github?redirect_uri=${encodeURIComponent(redirectUri)}&state=${state}&code_challenge=${codeChallenge}&source=cli`;
-
-    console.log(chalk.blue('Opening browser for GitHub authentication...'));
-    console.log(chalk.gray(`If the browser doesn't open, visit:\n${authUrl}\n`));
-
-    try {
-      const open = require('open');
-      await open(authUrl);
-    } catch {
-      console.log(chalk.yellow('Could not open browser automatically.'));
-    }
-
-    const spinner = ora('Waiting for authentication...').start();
-
-    setTimeout(() => {
-      if (server.listening) {
-        spinner.fail('Authentication timed out (60s). Try again.');
-        server.close();
+        saveCredentials(token);
+        spinner.succeed(chalk.green(`Logged in as @${token.username}`));
+      } catch (err) {
+        spinner.fail(chalk.red(`Login failed: ${err.message}`));
         process.exit(1);
       }
-    }, 60000);
-
-    server.on('close', () => {
-      spinner.stop();
     });
-  });
-}
 
-async function logout() {
-  const creds = loadCredentials();
+  program
+    .command('logout')
+    .description('Log out of Insighta')
+    .action(async () => {
+      const chalk = (await import('chalk')).default;
+      const ora = (await import('ora')).default;
 
-  if (!creds) {
-    console.log(chalk.yellow('Not logged in.'));
-    return;
-  }
+      const credentials = loadCredentials();
+      if (!credentials) {
+        console.log(chalk.yellow('Not currently logged in.'));
+        return;
+      }
 
-  const spinner = ora('Logging out...').start();
+      const spinner = ora('Logging out...').start();
 
-  try {
-    await fetch(`${API_BASE_URL}/auth/logout`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${creds.access_token}`
-      },
-      body: JSON.stringify({ refresh_token: creds.refresh_token })
+      try {
+        await authenticatedRequest('POST', '/auth/logout', {
+          body: { refresh_token: credentials.refresh_token },
+        });
+      } catch {
+        // proceed with local logout even if server call fails
+      }
+
+      deleteCredentials();
+      spinner.succeed(chalk.green('Logged out'));
     });
-  } catch {
-    // Ignore network errors during logout
-  }
 
-  clearCredentials();
-  spinner.succeed('Logged out successfully');
+  program
+    .command('whoami')
+    .description('Show current authenticated user')
+    .action(async () => {
+      const chalk = (await import('chalk')).default;
+      const ora = (await import('ora')).default;
+
+      const spinner = ora('Fetching user info...').start();
+
+      try {
+        const res = await authenticatedRequest('GET', '/auth/me');
+
+        if (res.status !== 200) {
+          spinner.fail(chalk.red('Failed to fetch user info.'));
+          process.exit(1);
+        }
+
+        spinner.stop();
+        console.log(userInfoTable(res.data));
+      } catch (err) {
+        spinner.fail();
+        await handleError(err);
+      }
+    });
 }
 
-async function whoami() {
-  const creds = loadCredentials();
-  if (!creds) {
-    console.log(chalk.red('Not authenticated. Run "insighta login" first.'));
-    process.exit(1);
-  }
-
-  const spinner = ora('Fetching user info...').start();
-
-  try {
-    const { apiFetch } = require('../lib/api');
-    const res = await apiFetch('/auth/me');
-    const data = await res.json();
-
-    spinner.stop();
-
-    if (data.status === 'success') {
-      displayUser(data.data);
-    } else {
-      displayError(data.message || 'Failed to get user info');
-    }
-  } catch (err) {
-    spinner.fail('Failed to fetch user info');
-    displayError(err.message);
-  }
-}
-
-module.exports = { login, logout, whoami };
+module.exports = { registerAuthCommands };

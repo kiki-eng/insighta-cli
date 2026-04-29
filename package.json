@@ -1,16 +1,22 @@
 {
   "name": "@insighta/cli",
   "version": "1.0.0",
-  "description": "CLI tool for Insighta Labs+ Profile Intelligence Platform",
+  "description": "CLI tool for interacting with the Insighta API",
+  "main": "bin/index.js",
   "bin": {
     "insighta": "./bin/index.js"
   },
   "scripts": {
-    "lint": "echo 'No linter configured'",
-    "start": "node bin/index.js"
+    "start": "node bin/index.js",
+    "lint": "echo \"No linter configured yet\""
   },
-  "keywords": ["insighta", "cli", "profiles"],
-  "author": "kiki-eng",
+  "keywords": [
+    "cli",
+    "insighta",
+    "profiles",
+    "api"
+  ],
+  "author": "",
   "license": "MIT",
   "dependencies": {
     "chalk": "^4.1.2",

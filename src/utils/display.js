@@ -1,86 +1,74 @@
+'use strict';
+
 const Table = require('cli-table3');
-const chalk = require('chalk');
 
-function displayProfilesTable(profiles, pagination) {
-  if (!profiles || profiles.length === 0) {
-    console.log(chalk.yellow('No profiles found.'));
-    return;
-  }
-
+function profileTable(profiles) {
   const table = new Table({
-    head: ['Name', 'Gender', 'Age', 'Age Group', 'Country', 'G.Prob', 'C.Prob'].map(h => chalk.cyan(h)),
-    colWidths: [22, 10, 6, 12, 8, 8, 8],
-    style: { 'padding-left': 1, 'padding-right': 1 }
+    head: ['ID', 'Name', 'Gender', 'Country', 'Age Group'],
+    style: { head: ['cyan'] },
+    wordWrap: true,
   });
 
-  profiles.forEach(p => {
+  for (const p of profiles) {
     table.push([
-      p.name,
-      p.gender,
-      p.age,
-      p.age_group,
-      p.country_id,
-      p.gender_probability?.toFixed(2) || '-',
-      p.country_probability?.toFixed(2) || '-'
+      p.id || '',
+      p.name || '',
+      p.gender || '',
+      p.country || '',
+      p.age_group || p.ageGroup || '',
     ]);
-  });
-
-  console.log(table.toString());
-
-  if (pagination) {
-    console.log(chalk.gray(
-      `\nPage ${pagination.page} of ${pagination.total_pages || Math.ceil(pagination.total / pagination.limit)} (${pagination.total} total)`
-    ));
   }
+
+  return table.toString();
 }
 
-function displayProfile(profile) {
-  if (!profile) {
-    console.log(chalk.yellow('No profile data.'));
-    return;
-  }
+function profileDetail(profile) {
+  const table = new Table({
+    style: { head: ['cyan'] },
+  });
 
-  const table = new Table({ style: { 'padding-left': 1, 'padding-right': 1 } });
   const fields = [
     ['ID', profile.id],
     ['Name', profile.name],
     ['Gender', profile.gender],
-    ['Gender Probability', profile.gender_probability],
+    ['Gender Probability', profile.gender_probability ?? profile.genderProbability],
+    ['Country', profile.country],
+    ['Country Probability', profile.country_probability ?? profile.countryProbability],
+    ['Age Group', profile.age_group ?? profile.ageGroup],
     ['Age', profile.age],
-    ['Age Group', profile.age_group],
-    ['Country ID', profile.country_id],
-    ['Country Name', profile.country_name],
-    ['Country Probability', profile.country_probability],
-    ['Created At', profile.created_at]
   ];
 
-  fields.forEach(([key, val]) => {
-    table.push({ [chalk.cyan(key)]: val || '-' });
+  for (const [key, value] of fields) {
+    if (value !== undefined && value !== null) {
+      table.push({ [key]: String(value) });
+    }
+  }
+
+  return table.toString();
+}
+
+function userInfoTable(user) {
+  const table = new Table({
+    style: { head: ['cyan'] },
   });
 
-  console.log(table.toString());
+  for (const [key, value] of Object.entries(user)) {
+    if (value !== undefined && value !== null) {
+      table.push({ [key]: String(value) });
+    }
+  }
+
+  return table.toString();
 }
 
-function displayUser(user) {
-  const table = new Table({ style: { 'padding-left': 1, 'padding-right': 1 } });
-  const fields = [
-    ['Username', user.username],
-    ['Email', user.email || '-'],
-    ['Role', user.role],
-    ['Active', user.is_active ? 'Yes' : 'No'],
-    ['Last Login', user.last_login_at || '-'],
-    ['Created At', user.created_at || '-']
-  ];
-
-  fields.forEach(([key, val]) => {
-    table.push({ [chalk.cyan(key)]: val });
-  });
-
-  console.log(table.toString());
+async function handleError(err) {
+  const chalk = (await import('chalk')).default;
+  if (err.code === 'ECONNREFUSED') {
+    console.error(chalk.red('Could not connect to the API server. Is it running?'));
+  } else {
+    console.error(chalk.red(`Error: ${err.message || err}`));
+  }
+  process.exit(1);
 }
 
-function displayError(message) {
-  console.error(chalk.red(`Error: ${message}`));
-}
-
-module.exports = { displayProfilesTable, displayProfile, displayUser, displayError };
+module.exports = { profileTable, profileDetail, userInfoTable, handleError };

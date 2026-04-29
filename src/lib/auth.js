@@ -1,6 +1,8 @@
+'use strict';
+
+const crypto = require('crypto');
 const fs = require('fs');
 const path = require('path');
-const crypto = require('crypto');
 const os = require('os');
 
 const CREDENTIALS_DIR = path.join(os.homedir(), '.insighta');
@@ -11,22 +13,30 @@ function generateState() {
 }
 
 function generateCodeVerifier() {
-  return crypto.randomBytes(32).toString('base64url');
+  return crypto.randomBytes(48).toString('base64url').slice(0, 64);
 }
 
 function generateCodeChallenge(verifier) {
   return crypto.createHash('sha256').update(verifier).digest('base64url');
 }
 
-function saveCredentials(data) {
+function ensureCredentialsDir() {
   if (!fs.existsSync(CREDENTIALS_DIR)) {
-    fs.mkdirSync(CREDENTIALS_DIR, { recursive: true });
+    fs.mkdirSync(CREDENTIALS_DIR, { recursive: true, mode: 0o700 });
   }
-  fs.writeFileSync(CREDENTIALS_FILE, JSON.stringify(data, null, 2));
+}
+
+function saveCredentials(credentials) {
+  ensureCredentialsDir();
+  fs.writeFileSync(CREDENTIALS_FILE, JSON.stringify(credentials, null, 2), {
+    mode: 0o600,
+  });
 }
 
 function loadCredentials() {
-  if (!fs.existsSync(CREDENTIALS_FILE)) return null;
+  if (!fs.existsSync(CREDENTIALS_FILE)) {
+    return null;
+  }
   try {
     return JSON.parse(fs.readFileSync(CREDENTIALS_FILE, 'utf-8'));
   } catch {
@@ -34,7 +44,7 @@ function loadCredentials() {
   }
 }
 
-function clearCredentials() {
+function deleteCredentials() {
   if (fs.existsSync(CREDENTIALS_FILE)) {
     fs.unlinkSync(CREDENTIALS_FILE);
   }
@@ -46,6 +56,6 @@ module.exports = {
   generateCodeChallenge,
   saveCredentials,
   loadCredentials,
-  clearCredentials,
-  CREDENTIALS_FILE
+  deleteCredentials,
+  CREDENTIALS_FILE,
 };
